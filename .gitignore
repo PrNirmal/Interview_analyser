@@ -1,26 +1,46 @@
-# OS
-.DS_Store
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Secrets
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables / secrets
 .env
 .env.*
 !.env.example
 
-# Python
-.venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
+# Models / Hugging Face cache
+.cache/
+huggingface/
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
 
-# Node / Vite
+# Local data
+uploads/
+data/
+tmp/
+temp/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Node
 node_modules/
 dist/
-*.local
-
-# Local vector store
-backend/storage/
+build/
