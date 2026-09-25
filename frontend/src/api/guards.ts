@@ -1,4 +1,5 @@
 import type {
+  AskAcrossInterviewsResponse,
   CrossExpertAnalysis,
   EvidenceReference,
   ExpertPosition,
@@ -6,6 +7,7 @@ import type {
   HealthResponse,
   InterviewAnalysis,
   InterviewQuestionAnswer,
+  QuestionEvidence,
 } from "../types/analysis";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,4 +112,24 @@ export function isFullAnalysisResponse(value: unknown): value is FullAnalysisRes
 export function isHealthResponse(value: unknown): value is HealthResponse {
   if (!isRecord(value)) return false;
   return isString(value.status) && isString(value.service);
+}
+
+function isQuestionEvidence(value: unknown): value is QuestionEvidence {
+  if (!isEvidence(value)) return false;
+  const record = value as unknown as Record<string, unknown>;
+  return (
+    isString(record.expert) &&
+    isString(record.role) &&
+    isString(record.market) &&
+    isString(record.speaker)
+  );
+}
+
+export function isQuestionResponse(value: unknown): value is AskAcrossInterviewsResponse {
+  if (!isRecord(value)) return false;
+  if (!isString(value.question) || !isString(value.answer) || !isString(value.confidence)) {
+    return false;
+  }
+  if (!Array.isArray(value.evidence)) return false;
+  return value.evidence.every(isQuestionEvidence);
 }

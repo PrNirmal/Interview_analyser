@@ -63,8 +63,8 @@ export function userFacingError(error: ApiError): UserFacingError {
       };
     case 501:
       return {
-        title: "Cross-interview questions are not available yet.",
-        description: error.message,
+        title: GENERIC_TITLE,
+        description: error.message || GENERIC_DESCRIPTION,
       };
     case 503:
       return {

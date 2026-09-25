@@ -109,6 +109,14 @@ export async function apiPost(
   );
 }
 
+export async function apiPostForm(
+  path: string,
+  body: FormData,
+  timeoutMs = HEALTH_TIMEOUT_MS,
+): Promise<unknown> {
+  return request(path, { method: "POST", body }, timeoutMs);
+}
+
 function timeoutSignal(timeoutMs: number): AbortSignal {
   if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
     return AbortSignal.timeout(timeoutMs);

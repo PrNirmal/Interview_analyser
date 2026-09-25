@@ -55,6 +55,31 @@ class FullAnalysisRequest(BaseModel):
         min_length=1,
     )
 
+    retrieval_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description=(
+            "How many transcript passages to retrieve for each question. "
+            "Uses the server default when omitted."
+        ),
+    )
+
+
+class QuestionRequest(BaseModel):
+    """A free-form question asked across the supplied transcripts."""
+
+    question: str = Field(
+        description="Question to answer from the interview transcripts.",
+        min_length=1,
+        examples=["Who said capital budget approval is the biggest issue?"],
+    )
+
+    transcripts: list[TranscriptRequest] = Field(
+        description="Transcripts to search. These are the interviews in the current analysis.",
+        min_length=1,
+    )
+
 
 # ============================================================
 # RESPONSE SCHEMAS — Individual Expert Analysis
@@ -159,6 +184,27 @@ class FullAnalysisResponse(BaseModel):
     experts: list[InterviewAnalysisResponse]
     cross_analysis: CrossExpertAnalysisResponse
     validation: ValidationResponse
+
+
+class QuestionEvidenceResponse(BaseModel):
+    """Evidence for a cross-interview answer, including who said it."""
+
+    segment_id: str
+    timestamp: str
+    quote: str
+    expert: str
+    role: str
+    market: str
+    speaker: str
+
+
+class QuestionResponse(BaseModel):
+    """Answer to a question asked across interview transcripts."""
+
+    question: str
+    answer: str
+    confidence: str
+    evidence: list[QuestionEvidenceResponse]
 
 
 # ============================================================

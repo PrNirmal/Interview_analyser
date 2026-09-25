@@ -19,32 +19,49 @@ export function ExpertPositions({ groups, onSegment }: ExpertPositionsProps) {
   return (
     <section className="section" id="expert-positions" aria-labelledby="positions-heading">
       <div className="section-heading">
-        <h2 id="positions-heading">Expert Positions</h2>
+        <div>
+          <span className="kicker">Detailed Stances</span>
+          <h2 id="positions-heading">Expert Positions</h2>
+          <p className="section-subtitle">
+            Individual viewpoints, policy statements, and clinical stances extracted by topic.
+          </p>
+        </div>
       </div>
+
       {!hasPositions ? (
         <EmptyState
           title="No expert positions"
           description="No expert positions were returned in the cross-expert analysis."
         />
       ) : (
-        <div className="stack">
+        <div className="positions-stack">
           {groups.map((group) =>
             group.positions.length === 0 ? null : (
-              <article key={`${group.source}-${group.topic}`} className="insight-card">
-                <p className="meta-label">{group.source}</p>
-                <h3>{group.topic}</h3>
+              <article key={`${group.source}-${group.topic}`} className="position-group-card">
+                <div className="position-group-header">
+                  <span className="source-tag">{group.source}</span>
+                  <h3 className="group-topic-title">{group.topic}</h3>
+                </div>
+
                 <div className="position-grid">
                   {group.positions.map((position) => (
                     <div
                       key={`${group.source}-${group.topic}-${position.expert}-${position.market}`}
                       className="position-cell"
                     >
-                      <p className="market">{position.market}</p>
-                      <p className="quiet">{position.expert}</p>
-                      <p className="meta-label">Position</p>
-                      <p>{position.position}</p>
-                      <p className="meta-label">Evidence</p>
-                      <SegmentLinks ids={position.evidence_segment_ids} onSegment={onSegment} />
+                      <div className="position-cell-top">
+                        <span className="market-badge">{position.market}</span>
+                        <span className="expert-name-sub">{position.expert}</span>
+                      </div>
+
+                      <div className="position-quote-block">
+                        <p className="position-text">"{position.position}"</p>
+                      </div>
+
+                      <div className="position-cell-foot">
+                        <span className="evidence-ref-label">Evidence references</span>
+                        <SegmentLinks ids={position.evidence_segment_ids} onSegment={onSegment} />
+                      </div>
                     </div>
                   ))}
                 </div>

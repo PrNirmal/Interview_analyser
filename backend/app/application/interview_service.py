@@ -38,18 +38,20 @@ class InterviewService:
             retriever=retriever,
         )
 
-    def analyze(self) -> InterviewAnalysis:
+    def analyze(self, retrieval_top_k: int | None = None) -> InterviewAnalysis:
 
         answers = []
 
         for interview_question in self.questions:
 
-            result = self.graph.invoke(
-                {
-                    "question": interview_question.question,
-                    "transcript_id": self.transcript_id,
-                }
-            )
+            payload: dict = {
+                "question": interview_question.question,
+                "transcript_id": self.transcript_id,
+            }
+            if retrieval_top_k is not None:
+                payload["retrieval_top_k"] = retrieval_top_k
+
+            result = self.graph.invoke(payload)
             answer = result["answer"]
 
             for evidence in answer.evidence:

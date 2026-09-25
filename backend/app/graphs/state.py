@@ -18,3 +18,5 @@ class InterviewQuestionState(TypedDict, total=False):
     is_valid: bool
 
     error: str | None
+
+    retrieval_top_k: int

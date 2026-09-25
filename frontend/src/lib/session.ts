@@ -7,6 +7,8 @@ export interface StoredTranscript {
   transcriptId: string;
   expert: string;
   market: string;
+  role?: string;
+  filePath?: string;
 }
 
 export interface AnalysisSession {
@@ -18,11 +20,16 @@ export interface AnalysisSession {
 
 function isStoredTranscript(value: unknown): value is StoredTranscript {
   if (!isRecord(value)) return false;
-  return (
-    typeof value.transcriptId === "string" &&
-    typeof value.expert === "string" &&
-    typeof value.market === "string"
-  );
+  if (
+    typeof value.transcriptId !== "string" ||
+    typeof value.expert !== "string" ||
+    typeof value.market !== "string"
+  ) {
+    return false;
+  }
+  if (value.role !== undefined && typeof value.role !== "string") return false;
+  if (value.filePath !== undefined && typeof value.filePath !== "string") return false;
+  return true;
 }
 
 function isSession(value: unknown): value is AnalysisSession {
@@ -49,4 +56,8 @@ export function loadSession(): AnalysisSession | null {
 
 export function saveSession(session: AnalysisSession): void {
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+}
+
+export function clearStoredSession(): void {
+  sessionStorage.removeItem(STORAGE_KEY);
 }

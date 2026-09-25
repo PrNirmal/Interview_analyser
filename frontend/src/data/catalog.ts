@@ -1,9 +1,8 @@
 /**
- * Case-study files the API already accepts.
+ * Built-in case-study files the API already accepts.
  *
- * Metadata is taken from backend/data, not from an analysis response.
- * The API has no catalog endpoint, so the workspace offers only these
- * known paths. Users cannot submit arbitrary file paths.
+ * Custom questions and uploaded transcripts are added on top of this
+ * catalog. Uploaded files are stored by the API under data/uploads.
  */
 
 export interface GuideCatalogItem {

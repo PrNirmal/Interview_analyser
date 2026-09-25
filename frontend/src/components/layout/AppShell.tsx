@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { AlertCircle } from "lucide-react";
 import { userFacingError } from "../../api/errors";
 import { useAnalysis } from "../../context/AnalysisContext";
 import { EvidenceViewer } from "../analysis/EvidenceViewer";
@@ -12,6 +13,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/analysis": "Analysis",
   "/insights": "Insights",
   "/history": "History",
+  "/settings": "Settings",
 };
 
 export function AppShell() {
@@ -20,8 +22,8 @@ export function AppShell() {
   const message = error && status === "error" ? userFacingError(error) : null;
 
   useEffect(() => {
-    const page = PAGE_TITLES[location.pathname] ?? "Interview Analyzer";
-    document.title = `${page} · Interview Analyzer`;
+    const page = PAGE_TITLES[location.pathname] ?? "Interview Analyser";
+    document.title = `${page} · Interview Analyser`;
   }, [location.pathname]);
 
   return (
@@ -29,23 +31,28 @@ export function AppShell() {
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <TopBar />
-      <div className="app-body">
-        <Sidebar />
+      <Sidebar />
+      <div className="app-main">
+        <TopBar />
         <main id="main" className="content">
           {message ? (
             <div className="error-banner" role="alert">
-              <h2>{message.title}</h2>
-              <p>{message.description}</p>
-              {import.meta.env.DEV ? (
-                <details>
-                  <summary>Technical details</summary>
-                  <p>
-                    {error?.code} · HTTP {error?.status}
-                  </p>
-                  <p>{error?.message}</p>
-                </details>
-              ) : null}
+              <div className="error-banner-icon">
+                <AlertCircle size={20} />
+              </div>
+              <div className="error-banner-body">
+                <h2>{message.title}</h2>
+                <p>{message.description}</p>
+                {import.meta.env.DEV ? (
+                  <details>
+                    <summary>Technical details</summary>
+                    <p className="mono">
+                      {error?.code} · HTTP {error?.status}
+                    </p>
+                    <p>{error?.message}</p>
+                  </details>
+                ) : null}
+              </div>
             </div>
           ) : null}
           <Outlet />

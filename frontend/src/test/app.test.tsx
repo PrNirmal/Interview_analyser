@@ -12,15 +12,22 @@ function renderApp() {
   );
 }
 
-function installFetch(analysis: () => Promise<Response> | Response) {
+function installFetch(
+  analysis: (input?: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response,
+) {
   const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-    async (input) => {
+    async (input, init) => {
     const url = String(input);
     if (url.endsWith("/health")) {
       return jsonResponse({ status: "ok", service: "interview-analyzer" });
     }
-    if (url.endsWith("/api/v1/analysis/full")) {
-      return analysis();
+    if (
+      url.endsWith("/api/v1/analysis/full") ||
+      url.endsWith("/api/v1/analysis/question") ||
+      url.endsWith("/api/v1/corpus/guide") ||
+      url.endsWith("/api/v1/corpus/transcripts")
+    ) {
+      return analysis(input, init);
     }
     return jsonResponse({ error: { code: "NOT_FOUND", message: "Not found" } }, 404);
   });
@@ -101,6 +108,7 @@ describe("Interview Analyzer", () => {
           file_path: "data/Transcript_3_UK.txt",
         },
       ],
+      retrieval_top_k: 5,
     });
   });
 
@@ -246,6 +254,155 @@ describe("Interview Analyzer", () => {
     );
   });
 
+  it("adds and removes a custom question", async () => {
+    const user = userEvent.setup();
+    installFetch(() => jsonResponse(analysisFixture));
+    renderApp();
+
+    await user.type(screen.getByRole("textbox", { name: "New question" }), "How does reimbursement affect adoption?");
+    await user.click(screen.getByRole("button", { name: "Add question" }));
+
+    expect(screen.getByText("How does reimbursement affect adoption?")).toBeInTheDocument();
+    expect(screen.getByText("7 questions")).toBeInTheDocument();
+    expect(screen.getByText("Custom guide")).toBeInTheDocument();
+
+    const added = screen.getByText("How does reimbursement affect adoption?").closest("li");
+    if (!added) throw new Error("Added question was not listed");
+    await user.click(within(added).getByRole("button", { name: "Remove" }));
+
+    expect(screen.queryByText("How does reimbursement affect adoption?")).not.toBeInTheDocument();
+    expect(screen.getByText("Interview_Guide.txt")).toBeInTheDocument();
+  });
+
+  it("saves a custom guide before analysis when questions change", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetch((input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/corpus/guide")) {
+        return jsonResponse({
+          filename: "custom_interview_guide.txt",
+          file_path: "data/uploads/custom_interview_guide.txt",
+          title: "European Robotic Surgery Market",
+          question_count: 7,
+          questions: ["Custom question"],
+        });
+      }
+      return jsonResponse(analysisFixture);
+    });
+    renderApp();
+
+    await user.type(screen.getByRole("textbox", { name: "New question" }), "What about service contracts?");
+    await user.click(screen.getByRole("button", { name: "Add question" }));
+    await user.click(screen.getByRole("button", { name: "Run Analysis" }));
+
+    await waitFor(() => {
+      const guideCall = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/api/v1/corpus/guide"));
+      expect(guideCall).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      const analysisCall = fetchMock.mock.calls.find((call) =>
+        String(call[0]).endsWith("/api/v1/analysis/full"),
+      );
+      const body = JSON.parse(String(analysisCall?.[1]?.body));
+      expect(body.guide_path).toBe("data/uploads/custom_interview_guide.txt");
+    });
+  });
+
+  it("uploads a transcript and selects it", async () => {
+    const user = userEvent.setup();
+    installFetch((input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/corpus/transcripts")) {
+        return jsonResponse({
+          transcript_id: "upload_sam_lee",
+          expert: "Sam Lee",
+          role: "Analyst",
+          market: "Spain",
+          filename: "spain_notes.txt",
+          file_path: "data/uploads/spain_notes.txt",
+        });
+      }
+      return jsonResponse(analysisFixture);
+    });
+    renderApp();
+
+    const file = new File(
+      ["Expert 1 – Sam Lee\nRole: Analyst\nMarket: Spain\n"],
+      "spain.txt",
+      { type: "text/plain" },
+    );
+    await user.upload(screen.getByLabelText("Transcript file"), file);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Expert")).toHaveValue("Sam Lee");
+    });
+    expect(screen.getByLabelText("Role")).toHaveValue("Analyst");
+    expect(screen.getByLabelText("Market")).toHaveValue("Spain");
+
+    await user.click(screen.getByRole("button", { name: "Add transcript" }));
+
+    expect(await screen.findByRole("checkbox", { name: /Sam Lee/ })).toBeChecked();
+    expect(screen.getByText("4 interviews selected")).toBeInTheDocument();
+  });
+
+  it("answers a question across the analyzed interviews", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetch((input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/analysis/question")) {
+        return jsonResponse({
+          question: "Who said capital budget approval is the biggest issue?",
+          answer: "Dr. Jean Martin said capital budget approval is the biggest issue.",
+          confidence: "high",
+          evidence: [
+            {
+              segment_id: "segment_023",
+              timestamp: "00:14:32",
+              quote: "The biggest issue is still capital budget approval.",
+              expert: "Dr. Jean Martin",
+              role: "Head of Urology",
+              market: "France",
+              speaker: "Dr. Jean Martin",
+            },
+          ],
+        });
+      }
+      return jsonResponse(analysisFixture);
+    });
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Run Analysis" }));
+    await screen.findByRole("heading", { name: "Analysis complete" });
+    await user.click(screen.getByRole("link", { name: "Insights" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Ask across interviews" }),
+      "Who said capital budget approval is the biggest issue?",
+    );
+    await user.click(screen.getByRole("button", { name: "Ask Question" }));
+
+    expect(
+      await screen.findByText("Dr. Jean Martin said capital budget approval is the biggest issue."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Dr. Jean Martin · France")).toBeInTheDocument();
+    expect(screen.getByText("The biggest issue is still capital budget approval.")).toBeInTheDocument();
+
+    const questionCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith("/api/v1/analysis/question"),
+    );
+    expect(questionCall?.[1]?.method).toBe("POST");
+    const body = JSON.parse(String(questionCall?.[1]?.body)) as {
+      question: string;
+      transcripts: Array<{ transcript_id: string }>;
+    };
+    expect(body.question).toBe("Who said capital budget approval is the biggest issue?");
+    expect(body.transcripts.map((item) => item.transcript_id)).toEqual([
+      "Transcript_1_France",
+      "Transcript_2_Germany",
+      "Transcript_3_UK",
+    ]);
+  });
+
   it("renders a network error when the API cannot be reached", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -265,5 +422,21 @@ describe("Interview Analyzer", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Cannot connect to the analysis server.",
     );
+  });
+
+  it("saves the workspace profile from settings", async () => {
+    const user = userEvent.setup();
+    installFetch(() => jsonResponse(analysisFixture));
+    renderApp();
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+
+    const name = screen.getByLabelText("Display name");
+    await user.clear(name);
+    await user.type(name, "Alex Chen");
+
+    expect(screen.getByText("Alex Chen")).toBeInTheDocument();
+    expect(screen.getByLabelText("Passages per question")).toHaveValue(5);
   });
 });

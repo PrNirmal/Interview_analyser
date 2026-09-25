@@ -16,6 +16,7 @@ export interface TranscriptRequest {
 export interface FullAnalysisRequest {
   guide_path: string;
   transcripts: TranscriptRequest[];
+  retrieval_top_k?: number;
 }
 
 export interface EvidenceReference {
@@ -86,17 +87,27 @@ export interface FullAnalysisResponse {
 export interface HealthResponse {
   status: string;
   service: string;
+  llm_provider?: string;
+  llm_model?: string;
+  embedding_provider?: string;
+  embedding_model?: string;
 }
 
-/**
- * Reserved for a future question endpoint.
- * POST /api/v1/analysis/full does not accept or return this shape.
- */
+export interface QuestionEvidence extends EvidenceReference {
+  expert: string;
+  role: string;
+  market: string;
+  speaker: string;
+}
+
 export interface AskAcrossInterviewsRequest {
   question: string;
+  transcripts: TranscriptRequest[];
 }
 
 export interface AskAcrossInterviewsResponse {
+  question: string;
   answer: string;
-  evidence: EvidenceReference[];
+  confidence: string;
+  evidence: QuestionEvidence[];
 }

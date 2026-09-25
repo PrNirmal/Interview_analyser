@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { healthCheck, runFullAnalysis } from "../api/analysis";
+import { saveCustomGuide } from "../api/corpus";
 import { ApiError } from "../api/errors";
 import { interviewGuide, transcriptCatalog } from "../data/catalog";
 import type { TranscriptCatalogItem } from "../data/catalog";
-import { loadSession, saveSession } from "../lib/session";
+import { clearStoredSession, loadSession, saveSession } from "../lib/session";
 import type { AnalysisSession } from "../lib/session";
 import type { ResolvedEvidence } from "../lib/evidence";
 import type { FullAnalysisRequest } from "../types/analysis";
+import { loadPreferences } from "../lib/preferences";
+import { loadWorkspace, questionsMatchGuide, saveWorkspace } from "../lib/workspace";
+import { usePreferences } from "../context/PreferencesContext";
 
 export const PROGRESS_LABELS = [
   "Preparing interviews...",
@@ -33,6 +37,14 @@ export interface AnalysisController {
   health: HealthState;
   evidence: ResolvedEvidence | null;
   toggleTranscript: (transcriptId: string) => void;
+  addQuestion: (question: string) => void;
+  removeQuestion: (index: number) => void;
+  addTranscript: (transcript: TranscriptCatalogItem) => void;
+  removeTranscript: (transcriptId: string) => void;
+  useBundledGuide: () => void;
+  keepCustomGuide: () => void;
+  clearSession: () => void;
+  resetWorkspace: () => void;
   run: () => Promise<void>;
   openEvidence: (evidence: ResolvedEvidence) => void;
   closeEvidence: () => void;
@@ -43,10 +55,16 @@ interface ControllerOptions {
   onComplete?: () => void;
 }
 
-function buildRequest(selectedIds: ReadonlySet<string>): FullAnalysisRequest {
+function buildRequest(
+  guidePath: string,
+  transcripts: readonly TranscriptCatalogItem[],
+  selectedIds: ReadonlySet<string>,
+  retrievalTopK: number,
+): FullAnalysisRequest {
   return {
-    guide_path: interviewGuide.filePath,
-    transcripts: transcriptCatalog
+    guide_path: guidePath,
+    retrieval_top_k: retrievalTopK,
+    transcripts: transcripts
       .filter((item) => selectedIds.has(item.transcriptId))
       .map((item) => ({
         transcript_id: item.transcriptId,
@@ -58,10 +76,22 @@ function buildRequest(selectedIds: ReadonlySet<string>): FullAnalysisRequest {
   };
 }
 
+function normalizeQuestion(question: string): string {
+  return question.replace(/^\d+\.\s+/, "").replace(/\s+/g, " ").trim();
+}
+
 export function useAnalysisController(options: ControllerOptions = {}): AnalysisController {
   const onComplete = options.onComplete;
+  const { preferences, updatePreferences } = usePreferences();
+  const [questions, setQuestions] = useState<string[]>(() => {
+    const saved = loadWorkspace().questions;
+    return loadPreferences().guideSource === "bundled" ? [...interviewGuide.questions] : saved;
+  });
+  const [transcripts, setTranscripts] = useState<TranscriptCatalogItem[]>(
+    () => loadWorkspace().transcripts,
+  );
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    () => new Set(transcriptCatalog.map((item) => item.transcriptId)),
+    () => new Set(loadWorkspace().transcripts.map((item) => item.transcriptId)),
   );
   const [status, setStatus] = useState<AnalysisStatus>("idle");
   const [progressLabel, setProgressLabel] = useState("");
@@ -70,6 +100,16 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
   const [health, setHealth] = useState<HealthState>("unknown");
   const [evidence, setEvidence] = useState<ResolvedEvidence | null>(null);
   const inFlight = useRef(false);
+
+  useEffect(() => {
+    saveWorkspace(questions, transcripts);
+  }, [questions, transcripts]);
+
+  useEffect(() => {
+    if (preferences.guideSource === "bundled" && !questionsMatchGuide(questions)) {
+      updatePreferences({ guideSource: "custom" });
+    }
+  }, [preferences.guideSource, questions, updatePreferences]);
 
   useEffect(() => {
     const stored = loadSession();
@@ -83,19 +123,25 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
   }, []);
 
   useEffect(() => {
+    if (status === "running") return undefined;
     let active = true;
-    healthCheck()
-      .then((result) => {
-        if (!active) return;
-        setHealth(result.status === "ok" ? "ready" : "unavailable");
-      })
-      .catch(() => {
-        if (active) setHealth("unavailable");
-      });
+    const check = () => {
+      healthCheck()
+        .then((result) => {
+          if (!active) return;
+          setHealth(result.status === "ok" ? "ready" : "unavailable");
+        })
+        .catch(() => {
+          if (active) setHealth("unavailable");
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 15000);
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [status]);
 
   useEffect(() => {
     if (status !== "running") return undefined;
@@ -118,9 +164,60 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
     });
   }, []);
 
+  const addQuestion = useCallback((question: string) => {
+    const cleaned = normalizeQuestion(question);
+    if (!cleaned) return;
+    setQuestions((current) => [...current, cleaned]);
+  }, []);
+
+  const removeQuestion = useCallback((index: number) => {
+    setQuestions((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }, []);
+
+  const addTranscript = useCallback((transcript: TranscriptCatalogItem) => {
+    setTranscripts((current) => {
+      if (current.some((item) => item.transcriptId === transcript.transcriptId)) return current;
+      return [...current, transcript];
+    });
+    setSelectedIds((current) => new Set(current).add(transcript.transcriptId));
+  }, []);
+
+  const removeTranscript = useCallback((transcriptId: string) => {
+    setTranscripts((current) => current.filter((item) => item.transcriptId !== transcriptId));
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      next.delete(transcriptId);
+      return next;
+    });
+  }, []);
+
+  const useBundledGuide = useCallback(() => {
+    setQuestions([...interviewGuide.questions]);
+    updatePreferences({ guideSource: "bundled" });
+  }, [updatePreferences]);
+
+  const keepCustomGuide = useCallback(() => {
+    updatePreferences({ guideSource: "custom" });
+  }, [updatePreferences]);
+
+  const clearSession = useCallback(() => {
+    clearStoredSession();
+    setSession(null);
+    setStatus("idle");
+    setError(null);
+    setEvidence(null);
+  }, []);
+
+  const resetWorkspace = useCallback(() => {
+    setQuestions([...interviewGuide.questions]);
+    setTranscripts([...transcriptCatalog]);
+    setSelectedIds(new Set(transcriptCatalog.map((item) => item.transcriptId)));
+    updatePreferences({ guideSource: "bundled" });
+  }, [updatePreferences]);
+
   const run = useCallback(async () => {
     if (inFlight.current) return;
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || questions.length === 0) return;
 
     inFlight.current = true;
     setError(null);
@@ -128,7 +225,15 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
     setStatus("running");
 
     try {
-      const request = buildRequest(selectedIds);
+      const guidePath = questionsMatchGuide(questions)
+        ? interviewGuide.filePath
+        : (await saveCustomGuide(interviewGuide.title, questions)).filePath;
+      const request = buildRequest(
+        guidePath,
+        transcripts,
+        selectedIds,
+        loadPreferences().retrievalTopK,
+      );
       const result = await runFullAnalysis(request);
       const nextSession: AnalysisSession = {
         result,
@@ -137,7 +242,9 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
         transcripts: request.transcripts.map((item) => ({
           transcriptId: item.transcript_id,
           expert: item.expert,
+          role: item.role,
           market: item.market,
+          filePath: item.file_path,
         })),
       };
       saveSession(nextSession);
@@ -154,7 +261,7 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
     } finally {
       inFlight.current = false;
     }
-  }, [onComplete, selectedIds]);
+  }, [onComplete, questions, selectedIds, transcripts]);
 
   const openEvidence = useCallback((next: ResolvedEvidence) => {
     setEvidence(next);
@@ -173,11 +280,11 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
   }, []);
 
   return {
-    guideFilename: interviewGuide.filename,
+    guideFilename: questionsMatchGuide(questions) ? interviewGuide.filename : "Custom guide",
     guideTitle: interviewGuide.title,
-    guideQuestionCount: interviewGuide.questionCount,
-    guideQuestions: interviewGuide.questions,
-    transcripts: transcriptCatalog,
+    guideQuestionCount: questions.length,
+    guideQuestions: questions,
+    transcripts,
     selectedIds,
     status,
     progressLabel,
@@ -186,6 +293,14 @@ export function useAnalysisController(options: ControllerOptions = {}): Analysis
     health,
     evidence,
     toggleTranscript,
+    addQuestion,
+    removeQuestion,
+    addTranscript,
+    removeTranscript,
+    useBundledGuide,
+    keepCustomGuide,
+    clearSession,
+    resetWorkspace,
     run,
     openEvidence,
     closeEvidence,

@@ -33,6 +33,7 @@ class FullInterviewAnalysisService:
         self,
         transcript: dict,
         questions,
+        retrieval_top_k: int | None = None,
     ):
 
         metadata = TranscriptMetadata(
@@ -56,12 +57,13 @@ class FullInterviewAnalysisService:
             market=metadata.market,
         )
 
-        return service.analyze()
+        return service.analyze(retrieval_top_k=retrieval_top_k)
 
     def analyze_all(
         self,
         guide_path: str,
         transcripts: list[dict],
+        retrieval_top_k: int | None = None,
     ):
 
         questions = self.load_questions(
@@ -75,6 +77,7 @@ class FullInterviewAnalysisService:
             analysis = self.analyze_transcript(
                 transcript=transcript,
                 questions=questions,
+                retrieval_top_k=retrieval_top_k,
             )
 
             analyses.append(analysis)

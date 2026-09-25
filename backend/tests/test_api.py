@@ -196,6 +196,16 @@ class TestHealth:
         data = response.json()
         assert data["service"] == "interview-analyzer"
 
+    def test_health_reports_active_models_without_secrets(self):
+        response = client.get("/health")
+        data = response.json()
+        assert data["llm_provider"]
+        assert data["llm_model"]
+        assert data["embedding_provider"]
+        assert data["embedding_model"]
+        assert "api_key" not in data
+        assert "openrouter_api_key" not in data
+
 
 # ============================================================
 # 2. Full analysis — success
@@ -716,3 +726,89 @@ class TestOpenAPI:
         assert data["info"]["title"] == "Interview Analyzer API"
         assert "/health" in data["paths"]
         assert "/api/v1/analysis/full" in data["paths"]
+        assert "/api/v1/analysis/question" in data["paths"]
+
+
+def _question_request() -> dict:
+    payload = _make_valid_request()
+    return {
+        "question": "Who said capital budget approval is the biggest issue?",
+        "transcripts": payload["transcripts"],
+    }
+
+
+def _question_answer():
+    answer = MagicMock()
+    answer.question = "Who said capital budget approval is the biggest issue?"
+    answer.answer = "Dr. Jean Martin said capital budget approval is the biggest issue."
+    answer.confidence = "high"
+    evidence = MagicMock()
+    evidence.segment_id = "Transcript_1_France-14"
+    evidence.timestamp = "00:14:32"
+    evidence.quote = "The biggest issue is still capital budget approval."
+    evidence.expert = "Dr. Jean Martin"
+    evidence.role = "Head of Urology"
+    evidence.market = "France"
+    evidence.speaker = "Dr. Jean Martin"
+    answer.evidence = [evidence]
+    return answer
+
+
+class TestAskQuestion:
+    @patch("app.api.dependencies.get_cross_interview_question_service")
+    def test_question_returns_answer_and_speaker(self, mock_service):
+        mock_service.return_value.answer.return_value = _question_answer()
+
+        response = client.post(
+            "/api/v1/analysis/question",
+            json=_question_request(),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["answer"] == (
+            "Dr. Jean Martin said capital budget approval is the biggest issue."
+        )
+        assert data["confidence"] == "high"
+        assert data["evidence"][0]["expert"] == "Dr. Jean Martin"
+        assert data["evidence"][0]["quote"] == (
+            "The biggest issue is still capital budget approval."
+        )
+        mock_service.return_value.answer.assert_called_once()
+
+    def test_empty_question_returns_422(self):
+        payload = _question_request()
+        payload["question"] = ""
+        response = client.post("/api/v1/analysis/question", json=payload)
+        assert response.status_code == 422
+
+    def test_missing_transcripts_returns_422(self):
+        response = client.post(
+            "/api/v1/analysis/question",
+            json={"question": "Who said this?", "transcripts": []},
+        )
+        assert response.status_code == 422
+
+    @patch("app.api.dependencies.get_cross_interview_question_service")
+    def test_no_evidence_returns_400(self, mock_service):
+        mock_service.return_value.answer.side_effect = ValueError(
+            "No relevant evidence found for the question."
+        )
+        response = client.post(
+            "/api/v1/analysis/question",
+            json=_question_request(),
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"]["code"] == "QUESTION_FAILED"
+
+    @patch("app.api.dependencies.get_cross_interview_question_service")
+    def test_validation_failure_returns_500(self, mock_service):
+        mock_service.return_value.answer.side_effect = ValueError(
+            "Generated answer failed evidence validation."
+        )
+        response = client.post(
+            "/api/v1/analysis/question",
+            json=_question_request(),
+        )
+        assert response.status_code == 500
+        assert response.json()["detail"]["error"]["code"] == "ANSWER_VALIDATION_FAILED"

@@ -1,12 +1,14 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AnalysisProvider } from "./context/AnalysisContext";
+import { PreferencesProvider } from "./context/PreferencesContext";
 import { AppShell } from "./components/layout/AppShell";
 import { AnalysisPage } from "./pages/AnalysisPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { InsightsPage } from "./pages/InsightsPage";
 import { InterviewsPage } from "./pages/InterviewsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 interface BoundaryProps {
   children: ReactNode;
@@ -44,17 +46,20 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 export function App() {
   return (
     <AppErrorBoundary>
-      <AnalysisProvider>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="interviews" element={<InterviewsPage />} />
-            <Route path="analysis" element={<AnalysisPage />} />
-            <Route path="insights" element={<InsightsPage />} />
-            <Route path="history" element={<HistoryPage />} />
-          </Route>
-        </Routes>
-      </AnalysisProvider>
+      <PreferencesProvider>
+        <AnalysisProvider>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route index element={<DashboardPage />} />
+              <Route path="interviews" element={<InterviewsPage />} />
+              <Route path="analysis" element={<AnalysisPage />} />
+              <Route path="insights" element={<InsightsPage />} />
+              <Route path="history" element={<HistoryPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+        </AnalysisProvider>
+      </PreferencesProvider>
     </AppErrorBoundary>
   );
 }

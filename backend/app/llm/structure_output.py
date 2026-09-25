@@ -22,7 +22,10 @@ def format_evidence(documents: list[Document]) -> str:
             f"""
 SEGMENT_ID: {metadata["segment_id"]}
 TIMESTAMP: {metadata["timestamp"]}
-SPEAKER: {metadata["speaker"]}
+SPEAKER: {metadata.get("speaker", "")}
+EXPERT: {metadata.get("expert", "")}
+ROLE: {metadata.get("role", "")}
+MARKET: {metadata.get("market", "")}
 
 TEXT:
 {document.page_content}

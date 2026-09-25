@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useAnalysis } from "../../context/AnalysisContext";
 import type { ResolvedEvidence } from "../../lib/evidence";
 import { initials } from "../../lib/metrics";
@@ -18,11 +19,17 @@ export function ExpertAnalysis() {
   if (!session) return null;
 
   return (
-    <section className="section" aria-labelledby="experts-heading">
+    <section className="section expert-analysis-section" aria-labelledby="experts-heading">
       <div className="section-heading">
-        <h2 id="experts-heading">Experts</h2>
+        <div>
+          <span className="kicker">Individual Transcripts</span>
+          <h2 id="experts-heading">Experts</h2>
+          <p className="section-subtitle">
+            Question-by-question responses extracted for each consulted specialist.
+          </p>
+        </div>
       </div>
-      <div className="expert-list">
+      <div className="expert-panels-stack">
         {experts.map((expert) => (
           <ExpertPanel
             key={expert.transcript_id}
@@ -55,56 +62,67 @@ function ExpertPanel({
   const [openQuestions, setOpenQuestions] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     expert.answers.forEach((answer, index) => {
-      initial[questionKey(answer.question_id, index)] = index === 0;
+      initial[questionKey(answer.question_id, index)] = true;
     });
     return initial;
   });
   const panelId = `expert-${expert.transcript_id}`;
 
   return (
-    <article className="expert-panel" id={expert.transcript_id}>
+    <article className={`expert-panel-card ${open ? "is-expanded" : ""}`} id={expert.transcript_id}>
       <button
         type="button"
-        className="expert-toggle"
+        className="expert-panel-toggle"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={onToggle}
       >
-        <span className="avatar" aria-hidden="true">
-          {initials(expert.expert)}
-        </span>
-        <span className="expert-toggle-text">
-          <span className="expert-name">{expert.expert}</span>
-          <span className="expert-role">
-            {expert.role} · {expert.market}
+        <div className="expert-panel-toggle-left">
+          <span className="avatar avatar-md" aria-hidden="true">
+            {initials(expert.expert)}
           </span>
-        </span>
-        <span className="quiet">
-          {expert.answers.length} {expert.answers.length === 1 ? "answer" : "answers"}
-        </span>
+          <div className="expert-info-block">
+            <span className="expert-name-title">{expert.expert}</span>
+            <span className="expert-role-sub">
+              {expert.role} · <span className="market-highlight">{expert.market}</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="expert-panel-toggle-right">
+          <span className="badge badge-info">
+            {expert.answers.length} {expert.answers.length === 1 ? "answer" : "answers"}
+          </span>
+          <span className="toggle-arrow" aria-hidden="true">
+            {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </span>
+        </div>
       </button>
+
       {open ? (
         <div id={panelId} className="expert-panel-body">
-          {expert.answers.map((answer, index) => {
-            const key = questionKey(answer.question_id, index);
-            return (
-              <AnswerCard
-                key={key}
-                expert={expert.expert}
-                role={expert.role}
-                market={expert.market}
-                answer={answer}
-                open={openQuestions[key] ?? false}
-                onToggle={() =>
-                  setOpenQuestions((current) => ({
-                    ...current,
-                    [key]: !current[key],
-                  }))
-                }
-                onViewEvidence={onViewEvidence}
-              />
-            );
-          })}
+          <div className="answers-accordion-list">
+            {expert.answers.map((answer, index) => {
+              const key = questionKey(answer.question_id, index);
+              return (
+                <AnswerCard
+                  key={key}
+                  expert={expert.expert}
+                  role={expert.role}
+                  market={expert.market}
+                  answer={answer}
+                  open={openQuestions[key] ?? false}
+                  onToggle={() =>
+                    setOpenQuestions((current) => ({
+                      ...current,
+                      [key]: !current[key],
+                    }))
+                  }
+                  onViewEvidence={onViewEvidence}
+                />
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </article>

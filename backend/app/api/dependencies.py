@@ -12,6 +12,7 @@ import logging
 from functools import lru_cache
 
 from app.application.analysis_service import CrossExpertAnalysisService
+from app.application.cross_interview_question_service import CrossInterviewQuestionService
 from app.application.full_analysis_service import FullInterviewAnalysisService
 
 logger = logging.getLogger(__name__)
@@ -39,3 +40,15 @@ def get_cross_expert_analysis_service() -> CrossExpertAnalysisService:
     """
     logger.info("Initializing CrossExpertAnalysisService")
     return CrossExpertAnalysisService()
+
+
+@lru_cache(maxsize=1)
+def get_cross_interview_question_service() -> CrossInterviewQuestionService:
+    """
+    Return a cached CrossInterviewQuestionService instance.
+
+    Retrieval models and the LLM load when a question is answered,
+    not when this service is constructed.
+    """
+    logger.info("Initializing CrossInterviewQuestionService")
+    return CrossInterviewQuestionService()

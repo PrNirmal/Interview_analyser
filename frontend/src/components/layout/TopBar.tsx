@@ -1,34 +1,42 @@
-import { useAnalysis } from "../../context/AnalysisContext";
+import { useLocation } from "react-router-dom";
+import { usePreferences } from "../../context/PreferencesContext";
+
+const BREADCRUMB_MAP: Record<string, string> = {
+  "/": "Overview",
+  "/interviews": "Expert Interviews",
+  "/analysis": "Research Analysis",
+  "/insights": "Cross-Interview Insights",
+  "/history": "Analysis History",
+  "/settings": "Settings",
+};
 
 export function TopBar() {
-  const { health, status } = useAnalysis();
-  const running = status === "running";
-
-  let label = "Checking API";
-  let state: "unknown" | "ready" | "unavailable" | "running" = "unknown";
-  if (running) {
-    label = "Analysis Running";
-    state = "running";
-  } else if (health === "ready") {
-    label = "API Ready";
-    state = "ready";
-  } else if (health === "unavailable") {
-    label = "API Unavailable";
-    state = "unavailable";
-  }
+  const location = useLocation();
+  const { preferences } = usePreferences();
+  const currentPage = BREADCRUMB_MAP[location.pathname] ?? "Workspace";
+  const initials = preferences.initials || "RA";
 
   return (
     <header className="topbar">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">
-          IA
-        </span>
-        <span>Interview Analyzer</span>
+      <div className="topbar-left">
+        <nav aria-label="Breadcrumb" className="breadcrumbs">
+          <span className="breadcrumb-root">Interview Analyser</span>
+          <span className="breadcrumb-separator" aria-hidden="true">/</span>
+          <span className="breadcrumb-current">{currentPage}</span>
+        </nav>
       </div>
-      <p className="system-status" data-state={state}>
-        <span className="status-dot" aria-hidden="true" />
-        <span>{label}</span>
-      </p>
+
+      <div className="topbar-right">
+        <div className="user-profile" title={preferences.workspaceName}>
+          <div className="user-avatar" aria-hidden="true">
+            <span>{initials}</span>
+          </div>
+          <div className="user-meta">
+            <span className="user-name">{preferences.displayName}</span>
+            <span className="user-role">{preferences.role}</span>
+          </div>
+        </div>
+      </div>
     </header>
   );
 }

@@ -1,6 +1,7 @@
 
 # API
 fastapi
+python-multipart
 uvicorn[standard]
 
 # models
