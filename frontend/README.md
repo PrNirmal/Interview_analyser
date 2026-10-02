@@ -17,11 +17,120 @@ AI analysis stays in the backend. This app sends the catalog's file paths and re
 | Vitest + Testing Library | Tests |
 | Custom CSS (`src/index.css`) | Layout and components |
 
-The UI is not built with Tailwind, shadcn/ui, or Radix. Shared controls are `Button`, `Badge`, and `EmptyState` in `src/components/ui/`.
+## Architecture & Component Flow
+
+The frontend is structured as a reactive single-page application (SPA) centered around an analysis controller hook (`useAnalysisController`) and React Context (`AnalysisContext`). State transitions from user configuration to full analysis execution, evidence exploration, and session persistence.
+
+### Architectural Diagram
+
+```mermaid
+graph TD
+    subgraph Browser["Browser Client (React 19 + TypeScript)"]
+        direction TB
+        App[App Root] --> ErrorBoundary[AppErrorBoundary]
+        ErrorBoundary --> PrefProv[PreferencesProvider]
+        PrefProv --> AnaProv[AnalysisProvider]
+        AnaProv --> AppShell[AppShell Layout]
+        
+        AppShell --> Sidebar[Sidebar Navigation]
+        AppShell --> TopBar[TopBar & API Health Monitor]
+        AppShell --> Banner[Dynamic Error / Alert Banner]
+        AppShell --> EvidenceModal[EvidenceViewer Slide-Over Modal]
+        AppShell --> Outlet[React Router Outlet]
+
+        Outlet --> P1[DashboardPage / Overview]
+        Outlet --> P2[InterviewsPage / Catalog & Upload]
+        Outlet --> P3[AnalysisPage / Expert Answers & Evidence]
+        Outlet --> P4[InsightsPage / Cross-Analysis & Themes]
+        Outlet --> P5[HistoryPage / Session Audit]
+        Outlet --> P6[SettingsPage / Guide & Retrieval Settings]
+    end
+
+    subgraph StateAndStorage["State & Persistence"]
+        Controller["AnalysisController (useAnalysisController)"]
+        SessionStore[("sessionStorage<br/>interview-analyzer:session")]
+        WorkspaceStore[("localStorage<br/>workspace & preferences")]
+    end
+
+    subgraph Network["API Client Layer"]
+        APIClient["src/api/client.ts (Fetch with AbortTimeout)"]
+        AnalysisAPI["src/api/analysis.ts (runFullAnalysis, healthCheck)"]
+        CorpusAPI["src/api/corpus.ts (saveCustomGuide, uploadTranscript)"]
+    end
+
+    AnaProv <--> Controller
+    Controller <--> SessionStore
+    Controller <--> WorkspaceStore
+    Controller --> AnalysisAPI
+    Controller --> CorpusAPI
+    AnalysisAPI --> APIClient
+    CorpusAPI --> APIClient
+    APIClient -->|HTTP / JSON| Backend["FastAPI Backend (Port 8000)"]
+```
+
+### Component & Page Hierarchy
+
+```text
+src/
+├── App.tsx                           # Root router & Error Boundary
+│   └── AppShell                      # Shell layout (persistent navigation & modals)
+│       ├── Sidebar                   # Navigation links & active route indicator
+│       ├── TopBar                    # API health status badge (GET /health)
+│       ├── EvidenceViewer            # Global drawer/modal for inspecting cited transcript segments
+│       └── <Outlet />
+│           ├── DashboardPage (/)     # Guide summary, expert roster, "Run Analysis" CTA
+│           ├── InterviewsPage        # Catalog view, transcript metadata, selection checkboxes
+│           ├── AnalysisPage          # Per-expert tabs, questions, answers, confidence & quote cards
+│           ├── InsightsPage          # Cross-expert themes, disagreements, position breakdown
+│           ├── HistoryPage           # Run review from current browser session
+│           └── SettingsPage          # Guide switching (bundled vs custom) & top-k tuning
+```
+
+### State Management & Data Flow
+
+1. **Workspace & Preferences Initialization**:
+   - `PreferencesProvider` loads user preferences (`localStorage`) such as guide selection and custom API parameters.
+   - `AnalysisProvider` wraps `useAnalysisController`, initializing selected transcripts and guide questions from workspace cache or bundled defaults (`src/data/catalog.ts`).
+2. **Analysis Execution Flow**:
+   ```text
+   User clicks "Run Analysis"
+           │
+           ▼
+   Verify health status (GET /health)
+           │
+           ▼
+   Set status = "running" & start rotating progress labels:
+     "Preparing interviews..." → "Analyzing responses..." → "Extracting evidence..." → "Validating..."
+           │
+           ▼
+   POST /api/v1/analysis/full via src/api/analysis.ts
+     Payload: { guide_path, retrieval_top_k, transcripts: [...] }
+           │
+           ├── [Success]
+           │     Validate payload with runtime type guard (isFullAnalysisResponse)
+           │     Save session to sessionStorage ('interview-analyzer:session')
+           │     Set status = "success"
+           │     Navigate to /analysis
+           │
+           └── [Failure]
+                 Parse error payload (ApiError)
+                 Set status = "error"
+                 Render user-facing error banner in AppShell
+   ```
+3. **Evidence Inspection Flow**:
+   - Each answer on `AnalysisPage` displays cited quotes with timestamps (e.g., `04:12 - 04:45`).
+   - Clicking an evidence badge calls `openEvidence(resolvedEvidence)`.
+   - `AppShell` detects active evidence and mounts `EvidenceViewer`.
+   - The user can inspect the exact verbatim quote, speaker turn, question context, and step through citations sequentially (`showEvidenceAt`).
+4. **Cross-Expert Synthesis Presentation**:
+   - `InsightsPage` consumes `session.response.cross_analysis`.
+   - Components render:
+     - `ThemeList`: Shared market insights across analyzed experts.
+     - `DisagreementList`: Direct contradictions identified between expert answers.
+     - `PositionSummary`: Breakdown of individual expert stances.
+     - `MarketComparison`: Geographic comparison across countries (France, Germany, UK).
 
 ---
-
-## Pages
 
 | Route | Page | What it shows |
 | --- | --- | --- |

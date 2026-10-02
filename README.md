@@ -19,28 +19,156 @@ The Insights page includes an "Ask across interviews" form. The API has no quest
 
 ---
 
-## Architecture
+## System Architecture & End-to-End Execution Flow
+
+The system is designed as a decoupled, evidence-first AI analysis platform. The React frontend handles user configuration, workflow triggers, and citation exploration. The FastAPI backend orchestrates document ingestion, a multi-stage hybrid retrieval engine, a LangGraph state machine for evidence-backed question answering, and a cross-expert comparative synthesis pipeline with strict validation.
+
+### Complete End-to-End Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph ClientTier["Frontend Client Tier (React 19 + TypeScript — Port 5172)"]
+        UI["User Interface (AppShell)"]
+        Pages["Pages: Dashboard | Interviews | Analysis | Insights | History"]
+        Context["AnalysisContext & useAnalysisController"]
+        SessionCache[("sessionStorage<br/>(interview-analyzer:session)")]
+        EvidenceUI["EvidenceViewer Modal<br/>(Transcript Quote & Timestamp Explorer)"]
+        
+        UI --> Pages
+        Pages --> Context
+        Context <--> SessionCache
+        Pages -.-> EvidenceUI
+    end
+
+    subgraph NetworkBoundary["HTTP / REST Boundary (JSON)"]
+        HealthReq["GET /health"]
+        AnalysisReq["POST /api/v1/analysis/full"]
+    end
+
+    subgraph BackendTier["Backend Application Tier (FastAPI — Port 8000)"]
+        APIRouter["API Router & Path Sandboxing (app/api/security.py)"]
+        FullService["FullInterviewAnalysisService"]
+        InterviewService["InterviewService (Per-Transcript Orchestrator)"]
+        CrossService["CrossExpertAnalysisService (Multi-Transcript Comparative)"]
+        
+        APIRouter --> FullService
+        FullService --> InterviewService
+        APIRouter --> CrossService
+    end
+
+    subgraph IngestionRAG["Data Ingestion & Hybrid Retrieval Engine"]
+        GuideParser["Interview Guide Parser (backend/data/Interview_Guide.txt)"]
+        TranscriptParser["Transcript Parser (Speaker turns & Timestamps)"]
+        BM25["BM25 Keyword Retriever (In-Memory Transcript)"]
+        ChromaDB[("Chroma Vector Store<br/>(storage/chroma)")]
+        RRF["Reciprocal Rank Fusion (RRF)"]
+        Reranker["BAAI/bge-reranker-base (Cross-Encoder)"]
+        
+        FullService --> GuideParser
+        InterviewService --> TranscriptParser
+        TranscriptParser --> BM25
+        BM25 & ChromaDB --> RRF
+        RRF --> Reranker
+    end
+
+    subgraph GraphTier["LangGraph Execution Loop (Per Question)"]
+        direction TB
+        NodeRetrieve["1. retrieve_node<br/>(Top-K Reranked Segments)"]
+        NodeGen["2. generate_node<br/>(Evidence-Grounded Prompting)"]
+        NodeVal["3. validate_node<br/>(Quote & Segment Verification)"]
+        
+        NodeRetrieve --> NodeGen --> NodeVal
+    end
+
+    subgraph Models["Inference & Validation"]
+        LLM["LLM (OpenRouter / Local Hugging Face)"]
+        CrossRepair["Cross-Analysis Repair & Evidence Auditor"]
+        
+        NodeGen <--> LLM
+        CrossService <--> LLM
+        CrossService --> CrossRepair
+    end
+
+    %% Network linkages
+    Context -->|Health Poll| HealthReq -->|Liveness Check| APIRouter
+    Context -->|Run Analysis| AnalysisReq -->|Validated Payload| APIRouter
+    
+    InterviewService --> GraphTier
+    Reranker --> NodeRetrieve
+    
+    CrossRepair --> APIRouter
+    NodeVal --> APIRouter
+    APIRouter -->|Structured JSON Response| Context
+```
+
+### End-to-End Execution Flow
 
 ```text
-React app (Vite, port 5172)
-        │
-        │  GET /health
-        │  POST /api/v1/analysis/full
-        ▼
-FastAPI
-        │
-        ├── Full interview analysis
-        │     parse guide + transcript
-        │     LangGraph: retrieve → generate → validate
-        │
-        └── Cross-expert analysis (2+ transcripts)
-              themes, differences, disagreements
-              evidence validation
-        │
-        ▼
-LLM (OpenRouter or local Hugging Face)
-Hybrid retrieval (BM25 + Chroma + reranker)
+[User in Browser] 
+    │  1. Selects transcripts & clicks "Run Analysis"
+    ▼
+[AnalysisContext]
+    │  2. Verifies API readiness (GET /health)
+    │  3. Starts simulated step-timer ("Preparing interviews...", "Extracting evidence...")
+    │  4. Dispatches POST /api/v1/analysis/full
+    ▼
+[FastAPI: app/api/routes/analysis.py]
+    │  5. Validates file paths (must reside within backend/data/ or backend/tests/)
+    ▼
+[FullInterviewAnalysisService]
+    │  6. Parses backend/data/Interview_Guide.txt into 6 structured questions
+    │  7. Iterates sequentially through each selected transcript:
+    │      │
+    │      ├─ [IngestionService]: Parses transcript into timestamped speaker turns
+    │      ├─ [HybridRetriever]: Indexes in-memory segments with BM25; connects to Chroma
+    │      │
+    │      └─ [InterviewService & LangGraph Workflow]:
+    │             For each of the 6 interview questions:
+    │               a. retrieve_node:
+    │                  - Queries BM25 (boosts expert answers) & Chroma (semantic embeddings)
+    │                  - Merges candidates with Reciprocal Rank Fusion (RRF)
+    │                  - Reranks top candidates via BAAI/bge-reranker-base cross-encoder
+    │               b. generate_node:
+    │                  - Builds grounded prompt with question + top-k evidence segments
+    │                  - Calls LLM (OpenRouter or HF) to produce answer, confidence, & cited quotes
+    │               c. validate_node:
+    │                  - Checks cited quotes against original transcript text
+    │                  - Validates segment_id and timestamp integrity
+    ▼
+[CrossExpertAnalysisService] (Active if ≥ 2 transcripts analyzed)
+    │  8. Aggregates all individual expert answers
+    │  9. Prompts LLM to identify Common Themes, Differences, and Disagreements
+    │ 10. repair_cross_expert_analysis(): Aligns expert names and quote references
+    │ 11. validate_cross_expert_analysis(): Verifies all claims link to valid expert evidence
+    ▼
+[FastAPI Serialization]
+    │ 12. Bundles FullAnalysisResponse (experts, cross_analysis, validation status)
+    │ 13. Returns HTTP 200 JSON
+    ▼
+[Frontend Context & UI Rendering]
+    │ 14. Runtime schema validation (isFullAnalysisResponse)
+    │ 15. Saves response to sessionStorage ('interview-analyzer:session')
+    │ 16. Transitions route to /analysis
+    │ 17. User navigates per-expert answers, inspects citations in EvidenceViewer modal,
+    │     and reviews comparative insights on /insights
 ```
+
+### Core Architectural Pillars
+
+1. **Strict Evidence Grounding & Anti-Hallucination**:
+   - The LLM is never queried without reranked source context.
+   - Answers require verbatim quotes and precise time intervals (`mm:ss - mm:ss`).
+   - Every returned quote is checked against source transcripts before the answer is accepted.
+2. **Multi-Stage Hybrid RAG**:
+   - Combines lexical precision (BM25) with conceptual relevance (vector embeddings).
+   - Re-ranking through a cross-encoder (`BAAI/bge-reranker-base`) ensures only the highest-signal segments enter the LLM context window.
+3. **Deterministic LangGraph State Machine**:
+   - Each interview question is resolved within an isolated `InterviewQuestionState` graph, decoupling retrieval, synthesis, and validation into observable, testable stages.
+4. **Cross-Expert Synthesis with Automated Repair**:
+   - Compares findings across geographical healthcare markets (France, Germany, UK).
+   - Findings undergo structural normalization and citation validation to ensure cross-expert claims directly reflect individual transcript evidence.
+5. **Interactive Evidence Traceability**:
+   - The frontend maintains deep links between synthesized answers, comparative themes, and raw source segments, allowing analysts to audit any claim in the `EvidenceViewer`.
 
 ---
 

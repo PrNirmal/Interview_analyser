@@ -194,39 +194,116 @@ Responses do not include API keys, prompts, or stack traces.
 
 ---
 
-## Analysis pipeline
+## Backend Architecture & Execution Flow
+
+The backend uses a layered clean architecture. FastAPI acts as the external interface and routes requests to high-level application orchestrators. LangGraph manages the stateful per-question reasoning loop, while a hybrid retrieval engine combines sparse (BM25) and dense (Chroma) search before cross-encoder reranking.
+
+### Architectural Diagram
+
+```mermaid
+graph TD
+    Client["Frontend Client / API Consumer"] -->|POST /api/v1/analysis/full| Main["FastAPI App (app/api/main.py)"]
+    
+    subgraph APILayer["1. API & Security Layer"]
+        Main --> Router["analysis.py Router"]
+        Router --> Sec["security.py (validate_file_path sandboxing)"]
+        Router --> Dep["dependencies.py (Lazy Service Injection)"]
+        Router --> Serializers["serializers.py"]
+    end
+
+    subgraph AppLayer["2. Application Orchestration Layer"]
+        Dep --> FullService["FullInterviewAnalysisService"]
+        FullService --> IngestionSvc["IngestionService"]
+        FullService -->|Per-Transcript| InterviewSvc["InterviewService"]
+        Router -->|2+ Transcripts| CrossSvc["CrossExpertAnalysisService"]
+    end
+
+    subgraph IngestionRetrieval["3. Ingestion & Hybrid Retrieval Layer"]
+        IngestionSvc --> DocLoader["document_loader.py"]
+        IngestionSvc --> GuideParser["interview_guide_parser.py"]
+        IngestionSvc --> TranscriptParser["transcript_parser.py (Speaker Segments & Timestamps)"]
+        
+        InterviewSvc --> Hybrid["HybridRetriever"]
+        Hybrid --> BM25["BM25 Keyword Search (In-Memory Transcript)"]
+        Hybrid --> Chroma["Chroma Vector Store (Local Embeddings)"]
+        BM25 & Chroma --> RRF["Reciprocal Rank Fusion (RRF)"]
+        RRF --> Reranker["BAAI/bge-reranker-base (Cross-Encoder)"]
+    end
+
+    subgraph GraphLayer["4. LangGraph Per-Question Workflow"]
+        InterviewSvc --> Graph["LangGraph StateGraph (InterviewQuestionState)"]
+        Graph --> NodeRetrieve["1. retrieve_node (Hybrid Search Top-K)"]
+        NodeRetrieve --> NodeGen["2. generate_node (Evidence-Grounded Prompt)"]
+        NodeGen --> NodeVal["3. validate_node (Quote & Citation Verification)"]
+    end
+
+    subgraph LLMLayer["5. Model Inference Layer"]
+        NodeGen --> LLMClient["LLM Provider (OpenRouter / Hugging Face)"]
+        CrossSvc --> LLMClient
+    end
+
+    subgraph ValidationRepair["6. Cross-Analysis & Validation Layer"]
+        CrossSvc --> CrossGen["cross_expert_analysis.py (Themes, Differences, Disagreements)"]
+        CrossGen --> Repair["repair_cross_expert_analysis (Quote & Speaker Matching)"]
+        Repair --> CrossVal["validate_cross_expert_analysis (Strict Citation Audit)"]
+    end
+
+    CrossVal --> Serializers
+    NodeVal --> Serializers
+    Serializers -->|HTTP 200 JSON| Client
+```
+
+### Detailed Execution Lifecycle
 
 ```text
 POST /api/v1/analysis/full
-        │
-        ▼
-FullInterviewAnalysisService
-        │
-        ├── parse interview guide
-        └── for each transcript
-              parse timestamped segments
-              InterviewService
-                    LangGraph per question
-                      retrieve → generate → validate
-        │
-        ▼
-CrossExpertAnalysisService   (only when 2+ transcripts)
-        generate themes, differences, disagreements
-        repair, then validate against expert evidence
+  │
+  ├─ 1. Security & Validation
+  │    • validate_file_path() confirms guide and transcript paths stay within backend/data/ or backend/tests/
+  │    • Input schema validation checks for required fields and non-empty transcripts list
+  │
+  ├─ 2. Ingestion & Guide Parsing
+  │    • IngestionService parses interview guide into structured InterviewQuestion instances
+  │    • For each transcript: parses speaker turns and timestamps into timestamped Document segments
+  │
+  ├─ 3. Per-Transcript Analysis (InterviewService)
+  │    • Instantiates HybridRetriever with the parsed transcript documents
+  │    • Compiles LangGraph workflow (START → retrieve → generate → validate → END)
+  │    • For each guide question:
+  │        [retrieve_node]:
+  │          - BM25 score over current transcript segments (prioritizing interviewee responses)
+  │          - Chroma vector similarity query filtered by transcript_id
+  │          - Reciprocal Rank Fusion (RRF) merges candidate lists
+  │          - BAAI/bge-reranker-base reranks candidates down to top-k
+  │        [generate_node]:
+  │          - Formats prompt with question and reranked context segments
+  │          - Calls LLM (OpenRouter / HF) requesting answer, confidence score, and verbatim quotes
+  │        [validate_node]:
+  │          - Verifies each cited quote actually exists in the source transcript
+  │          - Confirms segment IDs and timestamps match real speaker segments
+  │
+  ├─ 4. Cross-Expert Comparative Synthesis (CrossExpertAnalysisService)
+  │    • Executed only when ≥ 2 transcripts are provided
+  │    • Combines individual expert answers and prompts LLM to discover:
+  │        - Common Themes (shared agreements across markets)
+  │        - Differences (varying healthcare perspectives/contexts)
+  │        - Disagreements (conflicting or contradictory viewpoints)
+  │    • Repair Phase: repair_cross_expert_analysis() aligns expert names and quote references
+  │    • Validation Phase: validate_cross_expert_analysis() enforces strict evidence backing
+  │
+  └─ 5. Response Serialization
+       • Packages FullAnalysisResponse containing experts array, cross_analysis, and validation status
+       • Returns HTTP 200 to client
 ```
 
-Retrieval for a question is hybrid:
+### Hybrid Retrieval Mechanics
 
-1. BM25 over the transcript parsed for this request, preferring non-interviewer turns
-2. Semantic search in the local Chroma collection (`CHROMA_PATH`, default `storage/chroma`)
-3. Semantic hits kept only when their segment id belongs to that transcript
-4. Reciprocal rank fusion, then reranking with `BAAI/bge-reranker-base`
+Retrieval operates in four stages to eliminate hallucinations while maintaining low latency:
 
-Keyword search always uses the in-memory transcript. Semantic search only returns segments already stored in Chroma. `CorpusService.ingest_transcripts()` writes that collection. The full-analysis route does not call it. If Chroma has no matching segments, fused retrieval uses the keyword hits.
-
-Answer validation checks that each evidence `segment_id` and timestamp exist and that the quote appears in the transcript. Empty evidence is allowed when the model reports that nothing in the transcript supports the question.
-
-The reranker and embedding model download on first use. A full run can take several minutes.
+1. **Sparse (BM25) Search**: Indexes in-memory transcript segments for the active request. Tokens from interviewee turns receive higher priority over interviewer questioning.
+2. **Dense (Chroma) Vector Search**: Queries the local persistent Chroma vector store (`storage/chroma`) using embeddings (`sentence-transformers/all-MiniLM-L6-v2` or OpenRouter). Results are strictly constrained to the current `transcript_id`.
+3. **Reciprocal Rank Fusion (RRF)**: Merges the sparse and dense rank lists to handle both exact technical terminology and semantic variations. If Chroma contains no matching entries, BM25 fallback is automatically utilized.
+4. **Cross-Encoder Reranking**: The fused candidates are evaluated by `BAAI/bge-reranker-base`, scoring question-segment pairs to select the top-k most relevant evidence segments.
 
 ---
 
